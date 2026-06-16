@@ -23,14 +23,39 @@ const loading = ref(false)
 const trendChartRef = ref<HTMLElement | null>(null)
 let trendChartInstance: echarts.ECharts | null = null
 
+const allDiagnoses = ref<any[]>([])
+const allMaintenances = ref<any[]>([])
+
 const stats = computed(() => {
   const movements = movementStore.movements
+  const references = movementStore.references
   const totalMovements = movements.length
 
   let lowAmplitudeCount = 0
   let overRateCount = 0
   const lowAmplitudeMovements: { id?: number; brand?: string; model: string; serial?: string; amplitude?: number }[] = []
   const overRateMovements: { id?: number; brand?: string; model: string; serial?: string; rate?: number }[] = []
+
+  movements.forEach(m => {
+    const diag = [...allDiagnoses.value]
+      .filter(d => d.movement_id === m.id)
+      .sort((a, b) => new Date(b.diagnose_time || 0).getTime() - new Date(a.diagnose_time || 0).getTime())[0]
+
+    if (diag && (diag.amplitude !== undefined || diag.rate !== undefined)) {
+      const ref = references.find(r => r.model === m.model)
+      const minAmp = ref?.min_amplitude ?? 220
+      const allowRate = ref?.allow_rate_error ?? 6
+
+      if (diag.amplitude !== undefined && diag.amplitude < minAmp) {
+        lowAmplitudeCount++
+        lowAmplitudeMovements.push({ id: m.id, brand: m.brand, model: m.model, serial: m.serial, amplitude: diag.amplitude })
+      }
+      if (diag.rate !== undefined && Math.abs(diag.rate) > allowRate) {
+        overRateCount++
+        overRateMovements.push({ id: m.id, brand: m.brand, model: m.model, serial: m.serial, rate: diag.rate })
+      }
+    }
+  })
 
   const now = Date.now()
   const sevenDaysAgo = now - 7 * 86400000
@@ -44,6 +69,10 @@ const stats = computed(() => {
     }
   })
 
+  const recentCompletedCount = allMaintenances.value.filter(mt =>
+    mt.maintain_time && new Date(mt.maintain_time).getTime() > sevenDaysAgo
+  ).length
+
   const weeklyTrend: { date: string; newCount: number; completedCount: number }[] = []
   for (let i = 6; i >= 0; i--) {
     const d = new Date(now - i * 86400000)
@@ -54,7 +83,11 @@ const stats = computed(() => {
       const t = m.create_time ? new Date(m.create_time).getTime() : 0
       return t >= dayStart && t < dayEnd
     }).length
-    weeklyTrend.push({ date: dateStr, newCount, completedCount: 0 })
+    const completedCount = allMaintenances.value.filter(mt => {
+      const t = mt.maintain_time ? new Date(mt.maintain_time).getTime() : 0
+      return t >= dayStart && t < dayEnd
+    }).length
+    weeklyTrend.push({ date: dateStr, newCount, completedCount })
   }
 
   return {
@@ -62,13 +95,30 @@ const stats = computed(() => {
     lowAmplitudeCount,
     overRateCount,
     recentNewCount,
-    recentCompletedCount: 0,
+    recentCompletedCount,
     lowAmplitudeMovements,
     overRateMovements,
     recentNewMovements,
     weeklyTrend
   }
 })
+
+async function loadAllData() {
+  if (window.electronAPI) {
+    try {
+      const diagResult = await window.electronAPI.findAll('diagnosis')
+      allDiagnoses.value = diagResult.success ? (diagResult.data || []) : []
+      const maintResult = await window.electronAPI.findAll('maintenance')
+      allMaintenances.value = maintResult.success ? (maintResult.data || []) : []
+    } catch (e) {
+      allDiagnoses.value = []
+      allMaintenances.value = []
+    }
+  } else {
+    allDiagnoses.value = []
+    allMaintenances.value = []
+  }
+}
 
 function goTo(path: string) {
   router.push(path)
@@ -91,6 +141,7 @@ function initTrendChart() {
   const trend = stats.value.weeklyTrend
   const dates = trend.map(t => t.date.slice(5))
   const newCounts = trend.map(t => t.newCount)
+  const completedCounts = trend.map(t => t.completedCount)
 
   const option: echarts.EChartsOption = {
     backgroundColor: 'transparent',
@@ -99,6 +150,11 @@ function initTrendChart() {
       backgroundColor: 'rgba(19, 39, 68, 0.95)',
       borderColor: '#B8860B',
       textStyle: { color: '#E8E8E8' }
+    },
+    legend: {
+      data: ['新增档案', '完成调校'],
+      textStyle: { color: '#A0AEC0' },
+      top: 5
     },
     grid: { left: '10%', right: '10%', bottom: '15%', top: '15%' },
     xAxis: {
@@ -127,7 +183,20 @@ function initTrendChart() {
             { offset: 1, color: '#B8860B' }
           ])
         },
-        barWidth: '40%'
+        barWidth: '35%',
+        barGap: '10%'
+      },
+      {
+        name: '完成调校',
+        type: 'bar',
+        data: completedCounts,
+        itemStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: '#17A2B8' },
+            { offset: 1, color: '#0E7A8B' }
+          ])
+        },
+        barWidth: '35%'
       }
     ]
   }
@@ -140,6 +209,7 @@ onMounted(async () => {
   try {
     await movementStore.loadMovements()
     await movementStore.loadReferences()
+    await loadAllData()
     nextTick(() => {
       initTrendChart()
     })
@@ -166,7 +236,7 @@ onMounted(async () => {
       </div>
     </div>
 
-    <div class="grid grid-cols-4 gap-4">
+    <div class="grid grid-cols-5 gap-4">
       <div class="watch-card flex items-center gap-4">
         <div class="w-12 h-12 rounded-lg bg-[var(--bg-tertiary)] flex items-center justify-center">
           <Watch class="w-6 h-6 text-blue-400" />
@@ -203,13 +273,22 @@ onMounted(async () => {
           <p class="text-sm text-[var(--text-secondary)]">近7天新增</p>
         </div>
       </div>
+      <div class="watch-card flex items-center gap-4">
+        <div class="w-12 h-12 rounded-lg bg-teal-900/30 flex items-center justify-center">
+          <CheckCircle2 class="w-6 h-6 text-teal-400" />
+        </div>
+        <div>
+          <p class="text-2xl font-bold text-teal-400 font-mono">{{ stats.recentCompletedCount }}</p>
+          <p class="text-sm text-[var(--text-secondary)]">近7天完成调校</p>
+        </div>
+      </div>
     </div>
 
     <div class="grid grid-cols-3 gap-6">
       <div class="col-span-2 watch-card">
         <h3 class="text-[var(--accent-gold)] font-medium mb-4 flex items-center gap-2">
           <BarChart3 class="w-5 h-5" />
-          近7天新增趋势
+          近7天工作量
         </h3>
         <div ref="trendChartRef" class="h-64"></div>
       </div>

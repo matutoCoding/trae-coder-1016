@@ -146,6 +146,7 @@ const selectedMaterial = ref<string>('普通钢游丝')
 const compareMaterials = ref<string[]>(['Nivarox'])
 const hairspringMaterials = HAIRSPRING_MATERIALS
 const eccentricitySnapshots = ref<EccentricitySnapshot[]>([])
+const compareSnapshotIndex = ref<number>(-1)
 const wearingRangeDeviation = ref<number>(0)
 
 function updateTempChart() {
@@ -405,7 +406,11 @@ function updateVectorChart() {
         }
       },
       ...(eccentricitySnapshots.value.length >= 2 ? (() => {
-        const prev = eccentricitySnapshots.value[eccentricitySnapshots.value.length - 2]
+        const baselineIdx = compareSnapshotIndex.value >= 0
+          ? compareSnapshotIndex.value
+          : eccentricitySnapshots.value.length - 2
+        if (baselineIdx < 0 || baselineIdx >= eccentricitySnapshots.value.length) return []
+        const prev = eccentricitySnapshots.value[baselineIdx]
         const prevLateral = prev.position_errors.crown_right - prev.position_errors.crown_left
         const prevVertical = prev.position_errors.crown_down - prev.position_errors.crown_up
         return [{
@@ -504,15 +509,37 @@ function calculateEccentric() {
   positionAnalysis.value = analyzePositionErrorCauses(positionErrors)
   eccentricityAdjustment.value = calculateEccentricityAdjustment(positionErrors)
 
-  const snapshot: EccentricitySnapshot = {
-    timestamp: new Date().toISOString(),
-    position_errors: { ...positionErrors },
-    eccentricity: eccentricityAdjustment.value.eccentricity,
-    direction: eccentricityAdjustment.value.direction,
-    displacement: eccentricityAdjustment.value.displacement
-  }
-  eccentricitySnapshots.value.push(snapshot)
+  const lastSnap = eccentricitySnapshots.value[eccentricitySnapshots.value.length - 1]
+  const isSameAsLast = lastSnap &&
+    Math.abs(lastSnap.position_errors.face_up - positionErrors.face_up) < 0.01 &&
+    Math.abs(lastSnap.position_errors.face_down - positionErrors.face_down) < 0.01 &&
+    Math.abs(lastSnap.position_errors.crown_left - positionErrors.crown_left) < 0.01 &&
+    Math.abs(lastSnap.position_errors.crown_right - positionErrors.crown_right) < 0.01 &&
+    Math.abs(lastSnap.position_errors.crown_up - positionErrors.crown_up) < 0.01 &&
+    Math.abs(lastSnap.position_errors.crown_down - positionErrors.crown_down) < 0.01
 
+  if (!isSameAsLast) {
+    const snapshot: EccentricitySnapshot = {
+      timestamp: new Date().toISOString(),
+      position_errors: { ...positionErrors },
+      eccentricity: eccentricityAdjustment.value.eccentricity,
+      direction: eccentricityAdjustment.value.direction,
+      displacement: eccentricityAdjustment.value.displacement
+    }
+    eccentricitySnapshots.value.push(snapshot)
+  }
+
+  updateVectorChart()
+}
+
+function setCompareBaseline(index: number) {
+  compareSnapshotIndex.value = index
+  updateVectorChart()
+}
+
+function clearSnapshots() {
+  eccentricitySnapshots.value = []
+  compareSnapshotIndex.value = -1
   updateVectorChart()
 }
 
@@ -616,6 +643,7 @@ function loadScheme(scheme: Calibration) {
   if (scheme.eccentricity_snapshots) {
     eccentricitySnapshots.value = [...scheme.eccentricity_snapshots]
   }
+  compareSnapshotIndex.value = -1
   if (scheme.eccentricity != null) {
     calculateEccentric()
   }
@@ -1185,7 +1213,14 @@ onBeforeUnmount(() => {
           </div>
 
           <div v-if="eccentricitySnapshots.length > 0" class="watch-card mt-4">
-            <h4 class="text-[var(--accent-gold)] font-medium mb-3">偏心分析历史</h4>
+            <div class="flex items-center justify-between mb-3">
+              <h4 class="text-[var(--accent-gold)] font-medium">偏心分析历史</h4>
+              <button v-if="eccentricitySnapshots.length > 0" 
+                      @click="clearSnapshots"
+                      class="px-2 py-1 text-xs rounded bg-[var(--bg-tertiary)]/50 text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] transition-colors">
+                清除快照
+              </button>
+            </div>
             <div class="overflow-auto max-h-40">
               <table class="w-full">
                 <thead class="bg-[var(--bg-tertiary)] sticky top-0">
@@ -1194,6 +1229,7 @@ onBeforeUnmount(() => {
                     <th class="text-left p-2 text-xs text-[var(--text-secondary)]">偏心度</th>
                     <th class="text-left p-2 text-xs text-[var(--text-secondary)]">方向</th>
                     <th class="text-left p-2 text-xs text-[var(--text-secondary)]">位移量</th>
+                    <th class="text-left p-2 text-xs text-[var(--text-secondary)]">操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1202,6 +1238,13 @@ onBeforeUnmount(() => {
                     <td class="p-2 text-xs font-mono" :class="snap.eccentricity > 5 ? 'text-red-400' : 'text-green-400'">{{ snap.eccentricity.toFixed(1) }} s/d</td>
                     <td class="p-2 text-xs text-[var(--text-primary)]">{{ snap.direction }}</td>
                     <td class="p-2 text-xs font-mono text-[var(--accent-gold)]">{{ snap.displacement.toFixed(2) }} mm</td>
+                    <td class="p-2">
+                      <button @click="setCompareBaseline(eccentricitySnapshots.length - 1 - idx)" 
+                              class="p-1 rounded hover:bg-[var(--bg-tertiary)] text-xs text-[var(--accent-gold)]"
+                              :class="eccentricitySnapshots.length - 1 - idx === (compareSnapshotIndex >= 0 ? compareSnapshotIndex : eccentricitySnapshots.length - 2) ? 'underline' : ''">
+                        设为基准
+                      </button>
+                    </td>
                   </tr>
                 </tbody>
               </table>

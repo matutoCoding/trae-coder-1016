@@ -49,13 +49,14 @@ const form = reactive<Movement>({
 })
 
 const filteredMovements = computed(() => {
-  if (!searchKeyword.value) return movementStore.movements
-  const kw = searchKeyword.value.toLowerCase()
+  const rawKw = searchKeyword.value?.trim()
+  if (!rawKw) return movementStore.movements
+  const kw = rawKw.toLowerCase()
   return movementStore.movements.filter(m =>
-    m.model?.toLowerCase().includes(kw) ||
-    m.brand?.toLowerCase().includes(kw) ||
-    m.serial?.toLowerCase().includes(kw) ||
-    m.customer?.toLowerCase().includes(kw)
+    (m.model || '').toString().toLowerCase().trim().includes(kw) ||
+    (m.brand || '').toString().toLowerCase().trim().includes(kw) ||
+    (m.serial || '').toString().toLowerCase().trim().includes(kw) ||
+    (m.customer || '').toString().toLowerCase().trim().includes(kw)
   )
 })
 

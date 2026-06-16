@@ -164,8 +164,12 @@ function initChart() {
   const amplitudeData = history.map(d => [new Date(d.diagnose_time || 0).getTime(), d.amplitude || 0])
 
   const maintenanceMarks: any[] = []
+  const now = Date.now()
   diagnosisStore.maintenanceHistory.forEach(m => {
     if (m.maintain_time) {
+      const mt = new Date(m.maintain_time).getTime()
+      if (timeFilter.value === 'week' && now - mt >= 7 * 86400000) return
+      if (timeFilter.value === 'month' && now - mt >= 30 * 86400000) return
       maintenanceMarks.push({
         xAxis: new Date(m.maintain_time).getTime(),
         label: {
