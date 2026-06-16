@@ -10,7 +10,8 @@ import {
   Scissors,
   FolderOpen,
   BookOpen,
-  Home
+  Home,
+  BarChart3
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -21,6 +22,7 @@ const currentPath = computed(() => route.path)
 
 const menuItems = [
   { path: '/', icon: Home, label: '工作台' },
+  { path: '/overview', icon: BarChart3, label: '统计概览' },
   { path: '/movement', icon: Watch, label: '机芯录入' },
   { path: '/diagnosis', icon: Activity, label: '等时诊断' },
   { path: '/hairspring', icon: Scissors, label: '游丝配平' },

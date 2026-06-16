@@ -41,6 +41,7 @@ const showMaintenanceDialog = ref(false)
 const showDetailDialog = ref(false)
 const isEditing = ref(false)
 const chartRef = ref<HTMLElement | null>(null)
+const timeFilter = ref<'week' | 'month' | 'all'>('all')
 let chartInstance: echarts.ECharts | null = null
 
 const calibrationForm = reactive({
@@ -99,13 +100,15 @@ const filteredMovements = computed(() => {
   )
 })
 
-const amplitudeRateData = computed(() => {
-  if (!selectedMovement.value) return []
-  return diagnosisStore.diagnosisHistory.map(d => ({
-    amplitude: d.amplitude || 0,
-    rate: d.rate || 0,
-    time: d.diagnose_time || ''
-  }))
+const filteredDiagnosisHistory = computed(() => {
+  let history = [...diagnosisStore.diagnosisHistory]
+  const now = Date.now()
+  if (timeFilter.value === 'week') {
+    history = history.filter(d => d.diagnose_time && (now - new Date(d.diagnose_time).getTime()) < 7 * 86400000)
+  } else if (timeFilter.value === 'month') {
+    history = history.filter(d => d.diagnose_time && (now - new Date(d.diagnose_time).getTime()) < 30 * 86400000)
+  }
+  return history.sort((a, b) => new Date(a.diagnose_time || 0).getTime() - new Date(b.diagnose_time || 0).getTime())
 })
 
 const riskAlerts = computed((): RiskAlert[] => {
@@ -156,152 +159,121 @@ function initChart() {
     chartInstance = echarts.init(chartRef.value)
   }
 
-  const data = amplitudeRateData.value.map(d => [d.amplitude, d.rate, d.time])
+  const history = filteredDiagnosisHistory.value
+  const rateData = history.map(d => [new Date(d.diagnose_time || 0).getTime(), d.rate || 0])
+  const amplitudeData = history.map(d => [new Date(d.diagnose_time || 0).getTime(), d.amplitude || 0])
+
+  const maintenanceMarks: any[] = []
+  diagnosisStore.maintenanceHistory.forEach(m => {
+    if (m.maintain_time) {
+      maintenanceMarks.push({
+        xAxis: new Date(m.maintain_time).getTime(),
+        label: {
+          show: true,
+          formatter: m.operation || '维修',
+          color: '#17A2B8',
+          fontSize: 10,
+          rotate: 30
+        },
+        lineStyle: {
+          color: '#17A2B8',
+          type: 'dashed',
+          width: 1
+        }
+      })
+    }
+  })
 
   const option: echarts.EChartsOption = {
     backgroundColor: 'transparent',
-    grid: {
-      left: '10%',
-      right: '10%',
-      top: '15%',
-      bottom: '15%'
-    },
     tooltip: {
-      trigger: 'item',
+      trigger: 'axis',
       backgroundColor: 'rgba(19, 39, 68, 0.95)',
       borderColor: '#B8860B',
-      borderWidth: 1,
-      textStyle: {
-        color: '#E8E8E8'
-      },
+      textStyle: { color: '#E8E8E8', fontFamily: 'JetBrains Mono, monospace' },
       formatter: (params: any) => {
-        const [amplitude, rate, time] = params.value
-        return `<div style="padding: 8px;">
-          <div style="color: #B8860B; margin-bottom: 4px;">调校记录</div>
-          <div>摆幅: <span style="color: #E8E8E8; font-family: monospace;">${amplitude}°</span></div>
-          <div>日差: <span style="color: ${Math.abs(rate) > 5 ? '#DC3545' : '#28A745'}; font-family: monospace;">${rate > 0 ? '+' : ''}${rate} s/d</span></div>
-          <div style="color: #6B7280; font-size: 12px; margin-top: 4px;">${time ? new Date(time).toLocaleString('zh-CN') : '-'}</div>
-        </div>`
+        let html = '<div style="padding:4px">'
+        const time = new Date(params[0].value[0]).toLocaleString('zh-CN')
+        html += '<div style="color:#B8860B;margin-bottom:4px">' + time + '</div>'
+        params.forEach((p: any) => {
+          const color = p.seriesName === '日差' ? (Math.abs(p.value[1]) > 5 ? '#DC3545' : '#28A745') : (p.value[1] < 220 ? '#DC3545' : '#DAA520')
+          html += '<div style="color:' + color + '">' + p.seriesName + ': ' + p.value[1] + (p.seriesName === '日差' ? ' s/d' : '°') + '</div>'
+        })
+        html += '</div>'
+        return html
       }
     },
+    legend: {
+      data: ['日差', '摆幅'],
+      textStyle: { color: '#A0AEC0' },
+      top: 5
+    },
+    grid: { left: '10%', right: '10%', bottom: '15%', top: '18%' },
     xAxis: {
-      type: 'value',
-      name: '摆幅 (°)',
-      nameTextStyle: {
-        color: '#A0AEC0',
-        fontSize: 12
-      },
-      axisLine: {
-        lineStyle: {
-          color: '#2A4A6E'
-        }
-      },
-      axisLabel: {
-        color: '#A0AEC0',
-        fontFamily: 'monospace'
-      },
-      splitLine: {
-        lineStyle: {
-          color: 'rgba(42, 74, 110, 0.3)'
-        }
-      },
-      min: 150,
-      max: 350
+      type: 'time',
+      name: '时间',
+      nameTextStyle: { color: '#A0AEC0' },
+      axisLine: { lineStyle: { color: '#2A4A6E' } },
+      axisLabel: { color: '#A0AEC0', fontSize: 10, formatter: '{MM}/{dd}' },
+      splitLine: { lineStyle: { color: 'rgba(42, 74, 110, 0.3)' } }
     },
-    yAxis: {
-      type: 'value',
-      name: '日差 (s/d)',
-      nameTextStyle: {
-        color: '#A0AEC0',
-        fontSize: 12
+    yAxis: [
+      {
+        type: 'value',
+        name: '日差 (s/d)',
+        nameTextStyle: { color: '#DAA520' },
+        axisLine: { lineStyle: { color: '#2A4A6E' } },
+        axisLabel: { color: '#A0AEC0' },
+        splitLine: { lineStyle: { color: 'rgba(42, 74, 110, 0.3)' } }
       },
-      axisLine: {
-        lineStyle: {
-          color: '#2A4A6E'
-        }
-      },
-      axisLabel: {
-        color: '#A0AEC0',
-        fontFamily: 'monospace'
-      },
-      splitLine: {
-        lineStyle: {
-          color: 'rgba(42, 74, 110, 0.3)'
-        }
-      },
-      min: -30,
-      max: 30
-    },
+      {
+        type: 'value',
+        name: '摆幅 (°)',
+        nameTextStyle: { color: '#17A2B8' },
+        axisLine: { lineStyle: { color: '#2A4A6E' } },
+        axisLabel: { color: '#A0AEC0' },
+        splitLine: { show: false },
+        min: 150,
+        max: 350
+      }
+    ],
     series: [
       {
-        type: 'scatter',
-        data: data,
-        symbolSize: 12,
-        itemStyle: {
-          color: (params: any) => {
-            const amplitude = params.value[0]
-            if (amplitude < 220) return '#DC3545'
-            return '#B8860B'
-          },
-          shadowBlur: 10,
-          shadowColor: 'rgba(184, 134, 11, 0.5)'
-        },
-        emphasis: {
-          itemStyle: {
-            color: '#DAA520',
-            borderColor: '#fff',
-            borderWidth: 2
-          }
-        }
+        name: '日差',
+        type: 'line',
+        data: rateData,
+        smooth: true,
+        lineStyle: { color: '#DAA520', width: 2 },
+        itemStyle: { color: '#DAA520' },
+        symbolSize: 8
       },
       {
+        name: '摆幅',
         type: 'line',
-        data: data,
+        yAxisIndex: 1,
+        data: amplitudeData,
         smooth: true,
-        showSymbol: false,
-        lineStyle: {
-          color: 'rgba(184, 134, 11, 0.3)',
-          width: 2,
-          type: 'dashed'
-        }
+        lineStyle: { color: '#17A2B8', width: 2 },
+        itemStyle: {
+          color: (params: any) => params.value[1] < 220 ? '#DC3545' : '#17A2B8'
+        },
+        symbolSize: 8,
+        markLine: maintenanceMarks.length > 0 ? {
+          symbol: 'none',
+          data: maintenanceMarks
+        } : undefined
       }
     ],
     markLine: {
       silent: true,
       symbol: 'none',
-      lineStyle: {
-        color: '#DC3545',
-        type: 'dashed',
-        width: 1
-      },
       data: [
-        {
-          xAxis: 220,
-          label: {
-            show: true,
-            formatter: '最低摆幅 220度',
-            color: '#DC3545',
-            fontSize: 10
-          }
-        },
-        {
-          yAxis: 0,
-          label: {
-            show: true,
-            formatter: '0 s/d',
-            color: '#28A745',
-            fontSize: 10
-          },
-          lineStyle: {
-            color: '#28A745',
-            type: 'solid'
-          }
-        }
+        { yAxis: 0, lineStyle: { color: '#28A745', type: 'dashed', width: 1 }, label: { show: true, formatter: '0 s/d', color: '#28A745', fontSize: 10 } }
       ]
     }
   }
 
-  chartInstance.setOption(option)
+  chartInstance.setOption(option, true)
 }
 
 function openCalibrationDialog() {
@@ -511,6 +483,10 @@ onMounted(() => {
 watch(() => diagnosisStore.diagnosisHistory, () => {
   nextTick(() => initChart())
 }, { deep: true })
+
+watch(timeFilter, () => {
+  nextTick(() => initChart())
+})
 </script>
 
 <template>
@@ -679,23 +655,43 @@ watch(() => diagnosisStore.diagnosisHistory, () => {
 
     <div v-if="selectedMovement" class="grid grid-cols-2 gap-6">
       <div class="watch-card">
-        <h3 class="text-[var(--accent-gold)] font-medium mb-4 flex items-center gap-2">
-          <BarChart3 class="w-5 h-5" />
-          振幅日差图
+        <h3 class="text-[var(--accent-gold)] font-medium mb-4 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <BarChart3 class="w-5 h-5" />
+            日差摆幅趋势
+          </div>
+          <div class="flex gap-1">
+            <button @click="timeFilter = 'week'" class="px-3 py-1 rounded text-xs font-medium transition-all"
+                    :class="timeFilter === 'week' ? 'bg-[var(--accent-gold)] text-[var(--bg-primary)]' : 'bg-[var(--bg-tertiary)]/50 text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]'">
+              近一周
+            </button>
+            <button @click="timeFilter = 'month'" class="px-3 py-1 rounded text-xs font-medium transition-all"
+                    :class="timeFilter === 'month' ? 'bg-[var(--accent-gold)] text-[var(--bg-primary)]' : 'bg-[var(--bg-tertiary)]/50 text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]'">
+              近一月
+            </button>
+            <button @click="timeFilter = 'all'" class="px-3 py-1 rounded text-xs font-medium transition-all"
+                    :class="timeFilter === 'all' ? 'bg-[var(--accent-gold)] text-[var(--bg-primary)]' : 'bg-[var(--bg-tertiary)]/50 text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]'">
+              全部
+            </button>
+          </div>
         </h3>
         <div ref="chartRef" class="h-80 w-full"></div>
         <div class="mt-3 flex items-center justify-center gap-6 text-xs text-[var(--text-muted)]">
           <div class="flex items-center gap-2">
-            <span class="w-3 h-3 rounded-full bg-[var(--accent-gold)]"></span>
-            <span>正常摆幅 (≥220°)</span>
+            <span class="w-3 h-0.5 bg-[#DAA520]"></span>
+            <span>日差趋势</span>
           </div>
           <div class="flex items-center gap-2">
-            <span class="w-3 h-3 rounded-full bg-red-500"></span>
-            <span>摆幅过低 (<220°)</span>
+            <span class="w-3 h-0.5 bg-[#17A2B8]"></span>
+            <span>摆幅趋势</span>
           </div>
           <div class="flex items-center gap-2">
-            <span class="w-3 h-0.5 bg-green-500"></span>
-            <span>标准日差 0s/d</span>
+            <span class="w-3 h-0.5 bg-[#17A2B8]" style="border-top: 1px dashed #17A2B8; height: 0;"></span>
+            <span>维修操作</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-0.5 bg-red-500" style="height:0; border-top: 1px solid #DC3545;"></span>
+            <span>摆幅过低 (&lt;220°)</span>
           </div>
         </div>
       </div>

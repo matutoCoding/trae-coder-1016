@@ -37,6 +37,12 @@ const routes: RouteRecordRaw[] = [
     name: 'Reference',
     component: () => import('@/views/Reference.vue'),
     meta: { title: '参照库' }
+  },
+  {
+    path: '/overview',
+    name: 'Overview',
+    component: () => import('@/views/Overview.vue'),
+    meta: { title: '统计概览' }
   }
 ]
 

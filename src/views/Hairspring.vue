@@ -16,11 +16,16 @@ import {
   Clock,
   AlertTriangle,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  Edit,
+  Trash2
 } from 'lucide-vue-next'
-import type { PositionErrors, TrimCoilsResult, ClearanceCheckResult, TemperatureDriftPoint, Calibration } from '@/types'
+import type { PositionErrors, TrimCoilsResult, ClearanceCheckResult, TemperatureDriftPoint, Calibration, EccentricitySnapshot } from '@/types'
 import {
   simulateTemperatureDrift,
+  simulateTemperatureDriftByMaterial,
+  calculateWearingRangeDeviation,
+  HAIRSPRING_MATERIALS,
   calculateTrimCoils,
   checkEscapementClearance,
   analyzePositionErrorCauses,
@@ -137,6 +142,11 @@ const positionMatrix = ref<{
 } | null>(null)
 
 const savedSchemes = ref<Calibration[]>([])
+const selectedMaterial = ref<string>('普通钢游丝')
+const compareMaterials = ref<string[]>(['Nivarox'])
+const hairspringMaterials = HAIRSPRING_MATERIALS
+const eccentricitySnapshots = ref<EccentricitySnapshot[]>([])
+const wearingRangeDeviation = ref<number>(0)
 
 function updateTempChart() {
   if (!tempChartRef.value) return
@@ -144,15 +154,99 @@ function updateTempChart() {
     tempChartInstance = echarts.init(tempChartRef.value)
   }
 
-  temperatureDriftData.value = simulateTemperatureDrift(
+  const currentMaterial = hairspringMaterials.find(m => m.name === selectedMaterial.value) || hairspringMaterials[0]
+  temperatureDriftData.value = simulateTemperatureDriftByMaterial(
     tempParams.baseModulus,
     tempParams.frequency,
-    [-10, 60]
+    [-10, 60],
+    currentMaterial
+  )
+
+  wearingRangeDeviation.value = calculateWearingRangeDeviation(
+    tempParams.baseModulus,
+    tempParams.frequency,
+    currentMaterial
   )
 
   const tempData = temperatureDriftData.value.map(d => d.temp)
   const rateData = temperatureDriftData.value.map(d => d.rate)
   const modulusData = temperatureDriftData.value.map(d => d.modulus)
+
+  const legendData: string[] = [`${currentMaterial.name} 日差`, '弹性模量']
+  const seriesList: any[] = [
+    {
+      name: `${currentMaterial.name} 日差`,
+      type: 'line',
+      data: rateData,
+      smooth: true,
+      lineStyle: {
+        color: currentMaterial.color,
+        width: 3
+      },
+      itemStyle: {
+        color: currentMaterial.color
+      },
+      areaStyle: {
+        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+          { offset: 0, color: currentMaterial.color + '4D' },
+          { offset: 1, color: currentMaterial.color + '0D' }
+        ])
+      },
+      markLine: {
+        symbol: 'none',
+        data: [
+          { yAxis: 0, lineStyle: { color: '#28A745', type: 'dashed', width: 2 } }
+        ],
+        label: { show: false }
+      },
+      markArea: {
+        silent: true,
+        data: [[
+          { xAxis: '8', itemStyle: { color: 'rgba(40, 167, 69, 0.08)' } },
+          { xAxis: '38' }
+        ]],
+        label: { show: false }
+      }
+    },
+    {
+      name: '弹性模量',
+      type: 'line',
+      yAxisIndex: 1,
+      data: modulusData,
+      smooth: true,
+      lineStyle: {
+        color: '#17A2B8',
+        width: 2,
+        type: 'dashed'
+      },
+      itemStyle: {
+        color: '#17A2B8'
+      }
+    }
+  ]
+
+  compareMaterials.value.forEach(matName => {
+    if (matName === selectedMaterial.value) return
+    const mat = hairspringMaterials.find(m => m.name === matName)
+    if (!mat) return
+    const matData = simulateTemperatureDriftByMaterial(tempParams.baseModulus, tempParams.frequency, [-10, 60], mat)
+    const matRateData = matData.map(d => d.rate)
+    legendData.push(`${mat.name} 日差`)
+    seriesList.push({
+      name: `${mat.name} 日差`,
+      type: 'line',
+      data: matRateData,
+      smooth: true,
+      lineStyle: {
+        color: mat.color,
+        width: 2,
+        type: 'dashed'
+      },
+      itemStyle: {
+        color: mat.color
+      }
+    })
+  })
 
   const option: echarts.EChartsOption = {
     backgroundColor: 'transparent',
@@ -162,20 +256,20 @@ function updateTempChart() {
       borderColor: '#B8860B',
       textStyle: { color: '#E8E8E8' },
       formatter: (params: any) => {
-        const data = params[0]
-        const point = temperatureDriftData.value.find(p => p.temp === data.value)
-        if (!point) return ''
-        return `
-          <div style="font-family: 'JetBrains Mono', monospace;">
-            <div style="margin-bottom: 8px; font-weight: bold; color: #B8860B;">温度: ${point.temp}°C</div>
-            <div style="color: #DAA520;">弹性模量: ${point.modulus.toFixed(2)} GPa</div>
-            <div style="color: ${point.rate > 0 ? '#DC3545' : point.rate < 0 ? '#28A745' : '#E8E8E8'};">日差漂移: ${point.rate > 0 ? '+' : ''}${point.rate.toFixed(2)} s/d</div>
-          </div>
-        `
+        const tempIdx = params[0]?.dataIndex
+        const temp = temperatureDriftData.value[tempIdx]?.temp
+        if (temp == null) return ''
+        let html = `<div style="font-family: 'JetBrains Mono', monospace;"><div style="margin-bottom: 8px; font-weight: bold; color: #B8860B;">温度: ${temp}°C</div>`
+        params.forEach((p: any) => {
+          const color = p.color || '#E8E8E8'
+          html += `<div style="color: ${color};">${p.seriesName}: ${p.value > 0 ? '+' : ''}${Number(p.value).toFixed(2)}${p.seriesName.includes('日差') ? ' s/d' : ' GPa'}</div>`
+        })
+        html += '</div>'
+        return html
       }
     },
     legend: {
-      data: ['日差漂移', '弹性模量'],
+      data: legendData,
       textStyle: { color: '#A0AEC0' },
       top: 10
     },
@@ -212,52 +306,10 @@ function updateTempChart() {
         splitLine: { show: false }
       }
     ],
-    series: [
-      {
-        name: '日差漂移',
-        type: 'line',
-        data: rateData,
-        smooth: true,
-        lineStyle: {
-          color: '#DAA520',
-          width: 3
-        },
-        itemStyle: {
-          color: '#DAA520'
-        },
-        areaStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(218, 165, 32, 0.3)' },
-            { offset: 1, color: 'rgba(218, 165, 32, 0.05)' }
-          ])
-        },
-        markLine: {
-          symbol: 'none',
-          data: [
-            { yAxis: 0, lineStyle: { color: '#28A745', type: 'dashed', width: 2 } }
-          ],
-          label: { show: false }
-        }
-      },
-      {
-        name: '弹性模量',
-        type: 'line',
-        yAxisIndex: 1,
-        data: modulusData,
-        smooth: true,
-        lineStyle: {
-          color: '#17A2B8',
-          width: 2,
-          type: 'dashed'
-        },
-        itemStyle: {
-          color: '#17A2B8'
-        }
-      }
-    ]
+    series: seriesList
   }
 
-  tempChartInstance.setOption(option)
+  tempChartInstance.setOption(option, true)
 }
 
 function updateVectorChart() {
@@ -352,8 +404,26 @@ function updateVectorChart() {
           data: [{ name: '偏心方向', coord: [lateralError * scale, verticalError * scale] }]
         }
       },
+      ...(eccentricitySnapshots.value.length >= 2 ? (() => {
+        const prev = eccentricitySnapshots.value[eccentricitySnapshots.value.length - 2]
+        const prevLateral = prev.position_errors.crown_right - prev.position_errors.crown_left
+        const prevVertical = prev.position_errors.crown_down - prev.position_errors.crown_up
+        return [{
+          type: 'line' as const,
+          smooth: false,
+          lineStyle: { color: 'rgba(23, 162, 184, 0.6)', width: 2, type: 'dashed' as const },
+          data: [[0, 0], [prevLateral * scale, prevVertical * scale]],
+          symbol: 'none',
+          markPoint: {
+            symbol: 'arrow',
+            symbolSize: [12, 20],
+            itemStyle: { color: 'rgba(23, 162, 184, 0.8)' },
+            data: [{ name: '上次偏心', coord: [prevLateral * scale, prevVertical * scale] }]
+          }
+        }]
+      })() : []),
       {
-        type: 'gauge',
+        type: 'gauge' as const,
         radius: '90%',
         startAngle: 90,
         endAngle: -270,
@@ -433,6 +503,16 @@ function calculateEccentric() {
   positionMatrix.value = calculatePositionMatrix(positionErrors)
   positionAnalysis.value = analyzePositionErrorCauses(positionErrors)
   eccentricityAdjustment.value = calculateEccentricityAdjustment(positionErrors)
+
+  const snapshot: EccentricitySnapshot = {
+    timestamp: new Date().toISOString(),
+    position_errors: { ...positionErrors },
+    eccentricity: eccentricityAdjustment.value.eccentricity,
+    direction: eccentricityAdjustment.value.direction,
+    displacement: eccentricityAdjustment.value.displacement
+  }
+  eccentricitySnapshots.value.push(snapshot)
+
   updateVectorChart()
 }
 
@@ -466,7 +546,14 @@ async function saveScheme() {
     trim_coils: trimResult.value?.trimCoils,
     eccentricity: eccentricityAdjustment.value?.eccentricity,
     adjust_direction: eccentricityAdjustment.value?.direction,
-    timestamp: now
+    timestamp: now,
+    temp_params: { baseModulus: tempParams.baseModulus, frequency: tempParams.frequency },
+    trim_params: { currentRate: trimParams.currentRate, targetRate: trimParams.targetRate, currentCoils: trimParams.currentCoils },
+    position_errors: { ...positionErrors },
+    clearance_params: { ...clearanceParams },
+    hairspring_params: { ...hairspringParams },
+    material: selectedMaterial.value,
+    eccentricity_snapshots: [...eccentricitySnapshots.value]
   }
 
   loading.value = true
@@ -501,6 +588,77 @@ async function loadSavedSchemes() {
         return tb - ta
       })
     }
+  }
+}
+
+function loadScheme(scheme: Calibration) {
+  if (scheme.temp_params) {
+    tempParams.baseModulus = scheme.temp_params.baseModulus
+    tempParams.frequency = scheme.temp_params.frequency
+  }
+  if (scheme.trim_params) {
+    trimParams.currentRate = scheme.trim_params.currentRate
+    trimParams.targetRate = scheme.trim_params.targetRate
+    trimParams.currentCoils = scheme.trim_params.currentCoils
+  }
+  if (scheme.position_errors) {
+    Object.assign(positionErrors, scheme.position_errors)
+  }
+  if (scheme.clearance_params) {
+    Object.assign(clearanceParams, scheme.clearance_params)
+  }
+  if (scheme.hairspring_params) {
+    Object.assign(hairspringParams, scheme.hairspring_params)
+  }
+  if (scheme.material) {
+    selectedMaterial.value = scheme.material
+  }
+  if (scheme.eccentricity_snapshots) {
+    eccentricitySnapshots.value = [...scheme.eccentricity_snapshots]
+  }
+  if (scheme.eccentricity != null) {
+    calculateEccentric()
+  }
+  if (scheme.clearance_params) {
+    calculateClearance()
+  }
+  activeTab.value = 'temp'
+  nextTick(() => {
+    updateTempChart()
+  })
+  ElMessage.success('方案参数已回填')
+}
+
+async function deleteScheme(scheme: Calibration) {
+  if (!scheme.id) return
+  if (window.electronAPI) {
+    const result = await window.electronAPI.remove('calibration', scheme.id)
+    if (result.success) {
+      ElMessage.success('方案已删除')
+      loadSavedSchemes()
+    } else {
+      ElMessage.error('删除失败')
+    }
+  } else {
+    savedSchemes.value = savedSchemes.value.filter(s => s.id !== scheme.id)
+    ElMessage.success('方案已删除')
+  }
+}
+
+async function renameScheme(scheme: Calibration) {
+  const newName = window.prompt('请输入新的方案名称', scheme.name || '')
+  if (!newName) return
+  if (window.electronAPI && scheme.id) {
+    const result = await window.electronAPI.update('calibration', scheme.id, { name: newName })
+    if (result.success) {
+      ElMessage.success('方案已重命名')
+      loadSavedSchemes()
+    } else {
+      ElMessage.error('重命名失败')
+    }
+  } else {
+    scheme.name = newName
+    ElMessage.success('方案已重命名')
   }
 }
 
@@ -553,6 +711,10 @@ const hairspringPath = computed(() => {
 })
 
 watch([() => tempParams.baseModulus, () => tempParams.frequency], () => {
+  updateTempChart()
+}, { deep: true })
+
+watch([selectedMaterial, compareMaterials], () => {
   updateTempChart()
 }, { deep: true })
 
@@ -704,6 +866,21 @@ onBeforeUnmount(() => {
                   class="watch-input w-full font-mono"
                 />
               </div>
+              <div>
+                <label class="watch-label">游丝材质</label>
+                <select v-model="selectedMaterial" class="watch-input w-full font-mono">
+                  <option v-for="mat in hairspringMaterials" :key="mat.name" :value="mat.name">{{ mat.name }}</option>
+                </select>
+              </div>
+              <div>
+                <label class="watch-label">对比材质</label>
+                <div class="flex flex-wrap gap-2">
+                  <label v-for="mat in hairspringMaterials" :key="mat.name" class="flex items-center gap-1 text-sm">
+                    <input type="checkbox" :value="mat.name" v-model="compareMaterials" class="accent-[var(--accent-gold)]" />
+                    <span :style="{ color: mat.color }">{{ mat.name }}</span>
+                  </label>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -712,8 +889,12 @@ onBeforeUnmount(() => {
             <h4 class="text-[var(--accent-gold)] font-medium mb-4">温度特性分析</h4>
             <div class="space-y-4">
               <div class="p-3 rounded-lg bg-[var(--bg-tertiary)]/50">
+                <div class="text-sm text-[var(--text-secondary)] mb-1">当前材质</div>
+                <div class="text-xl font-mono" :style="{ color: hairspringMaterials.find(m => m.name === selectedMaterial)?.color || '#DAA520' }">{{ selectedMaterial }}</div>
+              </div>
+              <div class="p-3 rounded-lg bg-[var(--bg-tertiary)]/50">
                 <div class="text-sm text-[var(--text-secondary)] mb-1">温度系数</div>
-                <div class="text-xl font-mono text-[var(--text-primary)]">-0.0002 / °C</div>
+                <div class="text-xl font-mono text-[var(--text-primary)]">{{ hairspringMaterials.find(m => m.name === selectedMaterial)?.tempCoefficient || -0.0002 }} / °C</div>
               </div>
               <div class="p-3 rounded-lg bg-[var(--bg-tertiary)]/50">
                 <div class="text-sm text-[var(--text-secondary)] mb-1">测试范围</div>
@@ -727,6 +908,12 @@ onBeforeUnmount(() => {
                 <div class="text-sm text-[var(--text-secondary)] mb-1">最大漂移量</div>
                 <div class="text-xl font-mono" :class="temperatureDriftData.length > 0 && Math.max(...temperatureDriftData.map(d => Math.abs(d.rate))) > 10 ? 'text-red-400' : 'text-green-400'">
                   {{ temperatureDriftData.length > 0 ? Math.max(...temperatureDriftData.map(d => Math.abs(d.rate))).toFixed(2) : '0.00' }} s/d
+                </div>
+              </div>
+              <div class="p-3 rounded-lg bg-[var(--bg-tertiary)]/50">
+                <div class="text-sm text-[var(--text-secondary)] mb-1">佩戴温区最大日差 (8-38°C)</div>
+                <div class="text-xl font-mono" :class="wearingRangeDeviation > 5 ? 'text-red-400' : wearingRangeDeviation > 2 ? 'text-yellow-400' : 'text-green-400'">
+                  {{ wearingRangeDeviation.toFixed(2) }} s/d
                 </div>
               </div>
             </div>
@@ -997,6 +1184,30 @@ onBeforeUnmount(() => {
             <div ref="vectorChartRef" class="h-64"></div>
           </div>
 
+          <div v-if="eccentricitySnapshots.length > 0" class="watch-card mt-4">
+            <h4 class="text-[var(--accent-gold)] font-medium mb-3">偏心分析历史</h4>
+            <div class="overflow-auto max-h-40">
+              <table class="w-full">
+                <thead class="bg-[var(--bg-tertiary)] sticky top-0">
+                  <tr>
+                    <th class="text-left p-2 text-xs text-[var(--text-secondary)]">时间</th>
+                    <th class="text-left p-2 text-xs text-[var(--text-secondary)]">偏心度</th>
+                    <th class="text-left p-2 text-xs text-[var(--text-secondary)]">方向</th>
+                    <th class="text-left p-2 text-xs text-[var(--text-secondary)]">位移量</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(snap, idx) in [...eccentricitySnapshots].reverse()" :key="idx" class="border-b border-[var(--border-color)]">
+                    <td class="p-2 text-xs text-[var(--text-secondary)]">{{ new Date(snap.timestamp).toLocaleString('zh-CN') }}</td>
+                    <td class="p-2 text-xs font-mono" :class="snap.eccentricity > 5 ? 'text-red-400' : 'text-green-400'">{{ snap.eccentricity.toFixed(1) }} s/d</td>
+                    <td class="p-2 text-xs text-[var(--text-primary)]">{{ snap.direction }}</td>
+                    <td class="p-2 text-xs font-mono text-[var(--accent-gold)]">{{ snap.displacement.toFixed(2) }} mm</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
           <div v-if="eccentricityAdjustment && positionAnalysis" class="watch-card">
             <h4 class="text-[var(--accent-gold)] font-medium mb-4">调整方案</h4>
             <div class="space-y-4">
@@ -1193,19 +1404,23 @@ onBeforeUnmount(() => {
         <table class="w-full">
           <thead class="bg-[var(--bg-tertiary)] sticky top-0">
             <tr>
+              <th class="text-left p-3 text-[var(--text-secondary)] font-medium text-sm">方案名</th>
               <th class="text-left p-3 text-[var(--text-secondary)] font-medium text-sm">时间</th>
               <th class="text-left p-3 text-[var(--text-secondary)] font-medium text-sm">温度</th>
               <th class="text-left p-3 text-[var(--text-secondary)] font-medium text-sm">日差</th>
               <th class="text-left p-3 text-[var(--text-secondary)] font-medium text-sm">修剪圈数</th>
               <th class="text-left p-3 text-[var(--text-secondary)] font-medium text-sm">偏心度</th>
               <th class="text-left p-3 text-[var(--text-secondary)] font-medium text-sm">调整方向</th>
+              <th class="text-left p-3 text-[var(--text-secondary)] font-medium text-sm">操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="scheme in savedSchemes" :key="scheme.id"
-                class="border-b border-[var(--border-color)] hover:bg-[var(--bg-tertiary)]/30 transition-colors">
+                class="border-b border-[var(--border-color)] hover:bg-[var(--bg-tertiary)]/30 transition-colors cursor-pointer"
+                @click="loadScheme(scheme)">
+              <td class="p-3 text-sm text-[var(--text-primary)]">{{ scheme.name || '方案 ' + (savedSchemes.length - savedSchemes.indexOf(scheme)) }}</td>
               <td class="p-3 text-sm text-[var(--text-secondary)]">
-                {{ new Date(scheme.timestamp || 0).toLocaleString('zh-CN') }}
+                {{ scheme.timestamp ? new Date(scheme.timestamp).toLocaleString('zh-CN') : '-' }}
               </td>
               <td class="p-3 font-mono text-[var(--text-primary)]">{{ scheme.temperature }}°C</td>
               <td class="p-3 font-mono" :class="(scheme.target_rate || 0) > 0 ? 'text-green-400' : 'text-red-400'">
@@ -1216,6 +1431,19 @@ onBeforeUnmount(() => {
                 {{ (scheme.eccentricity || 0).toFixed(1) }} s/d
               </td>
               <td class="p-3 text-[var(--text-primary)]">{{ scheme.adjust_direction || '-' }}</td>
+              <td class="p-3 text-right">
+                <div class="flex items-center justify-end gap-1">
+                  <button @click.stop="loadScheme(scheme)" class="p-1.5 rounded hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--accent-gold)] transition-colors" title="回填参数">
+                    <RotateCcw class="w-4 h-4" />
+                  </button>
+                  <button @click.stop="renameScheme(scheme)" class="p-1.5 rounded hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--accent-gold)] transition-colors" title="重命名">
+                    <Edit class="w-4 h-4" />
+                  </button>
+                  <button @click.stop="deleteScheme(scheme)" class="p-1.5 rounded hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-red-400 transition-colors" title="删除">
+                    <Trash2 class="w-4 h-4" />
+                  </button>
+                </div>
+              </td>
             </tr>
           </tbody>
         </table>

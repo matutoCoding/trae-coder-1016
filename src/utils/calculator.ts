@@ -252,6 +252,52 @@ export function generateRiskAlerts(
   return alerts
 }
 
+export interface HairspringMaterial {
+  name: string
+  tempCoefficient: number
+  quadraticCoefficient: number
+  color: string
+}
+
+export const HAIRSPRING_MATERIALS: HairspringMaterial[] = [
+  { name: '普通钢游丝', tempCoefficient: -0.0002, quadraticCoefficient: -0.0000008, color: '#DAA520' },
+  { name: 'Nivarox', tempCoefficient: -0.00006, quadraticCoefficient: -0.0000002, color: '#17A2B8' },
+  { name: '硅游丝', tempCoefficient: -0.00001, quadraticCoefficient: 0.0000001, color: '#28A745' }
+]
+
+export function simulateTemperatureDriftByMaterial(
+  baseModulus: number,
+  frequency: number,
+  tempRange: [number, number],
+  material: HairspringMaterial
+): TemperatureDriftPoint[] {
+  const results: TemperatureDriftPoint[] = []
+  for (let t = tempRange[0]; t <= tempRange[1]; t += 5) {
+    const deltaT = t - 20
+    const modulus = baseModulus * (1 + material.tempCoefficient * deltaT + material.quadraticCoefficient * deltaT * deltaT)
+    const newFrequency = frequency * Math.sqrt(modulus / baseModulus)
+    const rate = (newFrequency - frequency) / frequency * 86400
+    results.push({ temp: t, modulus, rate: Number(rate.toFixed(2)) })
+  }
+  return results
+}
+
+export function calculateWearingRangeDeviation(
+  baseModulus: number,
+  frequency: number,
+  material: HairspringMaterial
+): number {
+  let maxAbsRate = 0
+  for (let t = 8; t <= 38; t += 1) {
+    const deltaT = t - 20
+    const modulus = baseModulus * (1 + material.tempCoefficient * deltaT + material.quadraticCoefficient * deltaT * deltaT)
+    const newFrequency = frequency * Math.sqrt(modulus / baseModulus)
+    const rate = Math.abs((newFrequency - frequency) / frequency * 86400)
+    if (rate > maxAbsRate) maxAbsRate = rate
+  }
+  return Number(maxAbsRate.toFixed(2))
+}
+
 export function calculateEccentricityAdjustment(
   positionErrors: PositionErrors
 ): {

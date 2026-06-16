@@ -132,6 +132,14 @@ export interface Maintenance {
   notes?: string
 }
 
+export interface EccentricitySnapshot {
+  timestamp: string
+  position_errors: PositionErrors
+  eccentricity: number
+  direction: string
+  displacement: number
+}
+
 export interface Calibration {
   id?: number
   movement_id: number
@@ -143,6 +151,14 @@ export interface Calibration {
   eccentricity?: number
   adjust_direction?: string
   timestamp?: string
+  name?: string
+  temp_params?: { baseModulus: number; frequency: number }
+  trim_params?: { currentRate: number; targetRate: number; currentCoils: number }
+  position_errors?: PositionErrors
+  clearance_params?: { lockAngle: number; impulseAngle: number; teeth: number; measuredClearance: number }
+  hairspring_params?: { thickness: number; width: number; coils: number; innerDiameter: number; outerDiameter: number }
+  material?: string
+  eccentricity_snapshots?: EccentricitySnapshot[]
 }
 
 export interface AmplitudeRateData {
@@ -188,6 +204,18 @@ declare global {
       saveFileDialog: () => Promise<any>
     }
   }
+}
+
+export interface StatsOverview {
+  totalMovements: number
+  lowAmplitudeCount: number
+  overRateCount: number
+  recentNewCount: number
+  recentCompletedCount: number
+  lowAmplitudeMovements: { id?: number; brand?: string; model: string; serial?: string; amplitude?: number }[]
+  overRateMovements: { id?: number; brand?: string; model: string; serial?: string; rate?: number }[]
+  recentNewMovements: { id?: number; brand?: string; model: string; serial?: string; create_time?: string }[]
+  weeklyTrend: { date: string; newCount: number; completedCount: number }[]
 }
 
 export {}
