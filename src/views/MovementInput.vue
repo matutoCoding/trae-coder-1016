@@ -74,6 +74,8 @@ function selectReference(ref: ReferenceMovement) {
 function resetForm() {
   const newForm = movementStore.createNewMovement()
   Object.assign(form, newForm)
+  form.id = undefined
+  form.create_time = undefined
   movementStore.setSelectedReference(null)
   isEdit.value = false
 }
@@ -158,7 +160,7 @@ onMounted(() => {
 })
 
 watch(() => movementStore.currentMovement, (m) => {
-  if (m && activeTab.value === 'form') {
+  if (m && activeTab.value === 'form' && isEdit.value) {
     Object.assign(form, { ...m })
   }
 })

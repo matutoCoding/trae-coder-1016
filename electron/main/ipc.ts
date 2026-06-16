@@ -107,7 +107,13 @@ export function registerIpcHandlers() {
 
   ipcMain.handle('db:saveDiagnosis', async (_event, diagnosis: any) => {
     try {
-      const id = db.insert('diagnosis', diagnosis)
+      let id: number
+      if (diagnosis.id) {
+        db.update('diagnosis', diagnosis.id, diagnosis)
+        id = diagnosis.id
+      } else {
+        id = db.insert('diagnosis', diagnosis)
+      }
       return { success: true, id }
     } catch (error: any) {
       return { success: false, error: error.message }

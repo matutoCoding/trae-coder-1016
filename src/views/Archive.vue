@@ -352,23 +352,20 @@ async function saveCalibration() {
     lock_status: calibrationForm.lock_status,
     impulse_status: calibrationForm.impulse_status,
     position_analysis: calibrationForm.position_analysis,
-    risk_warning: calibrationForm.risk_warning,
-    diagnose_time: new Date().toISOString()
+    risk_warning: calibrationForm.risk_warning
   }
 
   if (isEditing.value && editingRecord.value?.id) {
     diagnosis.id = editingRecord.value.id
+    diagnosis.diagnose_time = editingRecord.value.diagnose_time || new Date().toISOString()
+  } else {
+    diagnosis.diagnose_time = new Date().toISOString()
   }
 
   const id = await diagnosisStore.saveDiagnosis(diagnosis)
   if (id) {
     ElMessage.success(isEditing.value ? '更新成功' : '保存成功')
     showCalibrationDialog.value = false
-    diagnosisStore.addAmplitudeRateData({
-      amplitude: diagnosis.amplitude || 0,
-      rate: diagnosis.rate || 0,
-      time: diagnosis.diagnose_time || ''
-    })
     nextTick(() => initChart())
   } else {
     ElMessage.error('保存失败')

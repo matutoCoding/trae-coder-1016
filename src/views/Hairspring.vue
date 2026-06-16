@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
 import { useMovementStore } from '@/stores/movement'
@@ -139,7 +139,10 @@ const positionMatrix = ref<{
 const savedSchemes = ref<Calibration[]>([])
 
 function updateTempChart() {
-  if (!tempChartInstance || !tempChartRef.value) return
+  if (!tempChartRef.value) return
+  if (!tempChartInstance || tempChartInstance.isDisposed()) {
+    tempChartInstance = echarts.init(tempChartRef.value)
+  }
 
   temperatureDriftData.value = simulateTemperatureDrift(
     tempParams.baseModulus,
@@ -258,7 +261,10 @@ function updateTempChart() {
 }
 
 function updateVectorChart() {
-  if (!vectorChartInstance || !vectorChartRef.value) return
+  if (!vectorChartRef.value) return
+  if (!vectorChartInstance || vectorChartInstance.isDisposed()) {
+    vectorChartInstance = echarts.init(vectorChartRef.value)
+  }
 
   const { crown_left, crown_right, crown_up, crown_down } = positionErrors
   const lateralError = crown_right - crown_left
@@ -450,6 +456,7 @@ async function saveScheme() {
     return
   }
 
+  const now = new Date().toISOString()
   const calibration: Calibration = {
     movement_id: currentMovement.id,
     temperature: 20,
@@ -458,7 +465,8 @@ async function saveScheme() {
     target_rate: trimParams.targetRate,
     trim_coils: trimResult.value?.trimCoils,
     eccentricity: eccentricityAdjustment.value?.eccentricity,
-    adjust_direction: eccentricityAdjustment.value?.direction
+    adjust_direction: eccentricityAdjustment.value?.direction,
+    timestamp: now
   }
 
   loading.value = true
@@ -472,7 +480,7 @@ async function saveScheme() {
         ElMessage.error(result.error || '保存失败')
       }
     } else {
-      savedSchemes.value.push({ ...calibration, id: Date.now() })
+      savedSchemes.value.push({ ...calibration, id: Date.now(), timestamp: now })
       ElMessage.success('调整方案保存成功')
     }
   } finally {
@@ -550,6 +558,30 @@ watch(positionErrors, () => {
   }
 }, { deep: true })
 
+watch(activeTab, (tab) => {
+  nextTick(() => {
+    if (tab === 'temp') {
+      if (tempChartRef.value && !tempChartInstance) {
+        tempChartInstance = echarts.init(tempChartRef.value)
+      }
+      if (tempChartInstance) {
+        tempChartInstance.resize()
+        updateTempChart()
+      }
+    } else if (tab === 'eccentric') {
+      if (vectorChartRef.value && !vectorChartInstance) {
+        vectorChartInstance = echarts.init(vectorChartRef.value)
+      }
+      if (vectorChartInstance) {
+        vectorChartInstance.resize()
+        if (positionMatrix.value) {
+          updateVectorChart()
+        }
+      }
+    }
+  })
+})
+
 onMounted(() => {
   if (tempChartRef.value) {
     tempChartInstance = echarts.init(tempChartRef.value)
@@ -559,10 +591,18 @@ onMounted(() => {
     vectorChartInstance = echarts.init(vectorChartRef.value)
   }
 
+  loadSavedSchemes()
+
   window.addEventListener('resize', () => {
     tempChartInstance?.resize()
     vectorChartInstance?.resize()
   })
+})
+
+watch(() => movementStore.currentMovement, (m) => {
+  if (m?.id) {
+    loadSavedSchemes()
+  }
 })
 
 onBeforeUnmount(() => {
@@ -852,7 +892,7 @@ onBeforeUnmount(() => {
             </h4>
             <div class="grid grid-cols-3 gap-4">
               <div class="p-3 rounded-lg bg-[var(--bg-tertiary)]/30">
-                <label class="watch-label text-center">面下 (FH)</label>
+                <label class="watch-label text-center">面上 (FU)</label>
                 <input
                   v-model.number="positionErrors.face_up"
                   type="number"
@@ -861,7 +901,7 @@ onBeforeUnmount(() => {
                 />
               </div>
               <div class="p-3 rounded-lg bg-[var(--bg-tertiary)]/30">
-                <label class="watch-label text-center">面上 (FH)</label>
+                <label class="watch-label text-center">面下 (FD)</label>
                 <input
                   v-model.number="positionErrors.face_down"
                   type="number"
