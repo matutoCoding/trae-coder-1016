@@ -495,7 +495,11 @@ async function loadSavedSchemes() {
   if (window.electronAPI) {
     const result = await window.electronAPI.getCalibrations(currentMovement.id)
     if (result.success) {
-      savedSchemes.value = result.data
+      savedSchemes.value = (result.data || []).sort((a: Calibration, b: Calibration) => {
+        const ta = a.timestamp ? new Date(a.timestamp).getTime() : 0
+        const tb = b.timestamp ? new Date(b.timestamp).getTime() : 0
+        return tb - ta
+      })
     }
   }
 }
@@ -561,18 +565,20 @@ watch(positionErrors, () => {
 watch(activeTab, (tab) => {
   nextTick(() => {
     if (tab === 'temp') {
-      if (tempChartRef.value && !tempChartInstance) {
-        tempChartInstance = echarts.init(tempChartRef.value)
-      }
-      if (tempChartInstance) {
+      if (tempChartRef.value) {
+        if (!tempChartInstance || !document.body.contains(tempChartInstance.getDom())) {
+          tempChartInstance?.dispose()
+          tempChartInstance = echarts.init(tempChartRef.value)
+        }
         tempChartInstance.resize()
         updateTempChart()
       }
     } else if (tab === 'eccentric') {
-      if (vectorChartRef.value && !vectorChartInstance) {
-        vectorChartInstance = echarts.init(vectorChartRef.value)
-      }
-      if (vectorChartInstance) {
+      if (vectorChartRef.value) {
+        if (!vectorChartInstance || !document.body.contains(vectorChartInstance.getDom())) {
+          vectorChartInstance?.dispose()
+          vectorChartInstance = echarts.init(vectorChartRef.value)
+        }
         vectorChartInstance.resize()
         if (positionMatrix.value) {
           updateVectorChart()
